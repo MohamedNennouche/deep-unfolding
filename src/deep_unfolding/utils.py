@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 import numpy as np
 import torch
@@ -50,7 +49,7 @@ def gen_linear(
         - Tensor $y$ resulting from `solution @ H` of shape (`bs`, `m`)
     """
     np.random.seed(seed=seed)
-    h = np.random.normal(0, 1.0 / math.sqrt(n), (n, m))
+    h = np.random.normal(0, 1.0 / np.sqrt(n), (n, m))
     a = np.dot(h, h.T)
     eig = np.linalg.eigvals(a)
 
@@ -64,6 +63,7 @@ def gen_linear(
     - Max eigenvalue of A: {np.max(eig)}"""
     )
 
+    # this part should be changed
     solution = torch.normal(torch.zeros(bs, n), 1.0).to(device).detach()
     y = solution @ ht.detach()
 
@@ -71,14 +71,14 @@ def gen_linear(
 
 
 def _decompose_matrix(
-    a: NDArray | Tensor,
+    h: NDArray | Tensor,
     device: torch.device = _device,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Decompose a given matrix into its diagonal, lower triangular, upper
     triangular components and their inverses.
 
     Args:
-      a: Input square matrix to decompose.
+      a: Input random matrix to decompose.
       device: Device to run the computations on.
 
     Returns:
@@ -90,6 +90,10 @@ def _decompose_matrix(
         - $D^{-1}$: Inverse of the diagonal matrix $D$.
         - $M^{-1}$: Inverse of the matrix $D + L$.
     """
+    
+    # square matrix generated from the original matrix
+    a = np.dot(h, h.T)
+    
     # Decomposed matrix calculations
     d = np.diag(np.diag(a))  # Diagonal matrix
     l = np.tril(a, -1)  # Lower triangular matrix  # noqa: E741
