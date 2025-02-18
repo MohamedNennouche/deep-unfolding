@@ -71,8 +71,8 @@ def test_y_calculation(generate_data):
 
 @pytest.fixture
 def decompose_data():
-    A = np.random.rand(5, 5)
-    return _decompose_matrix(A)
+    H = np.random.rand(5, 6)
+    return _decompose_matrix(H)
 
 
 def test_decompose_matrix_shapes(decompose_data):
