@@ -10,11 +10,56 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+
 from .utils import _decompose_matrix, _device
 
 # Create a logger for this module
 _logger = logging.getLogger(__name__)
 """Logger for this module."""
+
+
+def deep_train(
+    model,
+    H: Tensor,
+    y: Tensor,
+    optimizer: torch.optim.Optimizer,
+    loss_func: torch.nn.Module,
+    total_itr: int = 25,
+    num_batch: int = 10000,
+) -> list[float]:
+    """Train the given model using the specified optimizer and loss function.
+
+    Args:
+        optimizer: The optimizer to use for training.
+        loss_func: The loss function to use for training.
+        total_itr: The total number of iterations (generations) for training.
+        A: The initial matrix.
+        b: The solution of the linear problem
+        num_batch: The number of batches per iteration.
+
+    Returns:
+        The list of loss values per iteration.
+    """
+    loss_gen = []
+    for gen in range(total_itr):
+        for i in range(num_batch):
+            optimizer.zero_grad()
+            x_hat, _ = model(gen + 1) # change the structure of forward function
+            loss = loss_func(x_hat @ H, y)  # to avoid using the solution
+            loss.backward()
+            optimizer.step()
+
+            if i % 200 == 0:
+                print(
+                    "generation:",
+                    gen + 1,
+                    " batch:",
+                    i,
+                    "\t MSE loss:",
+                    loss.item(),
+                )
+        loss_gen.append(loss.item())
+    return loss_gen
 
 
 class UnfoldingNet(nn.Module):
@@ -74,6 +119,9 @@ class UnfoldingNet(nn.Module):
             raise RuntimeError("Problem has not been solved yet!")
         return self._s_hats[-1]
     
+    def forward(self, num_itr: int = 25) : 
+        pass
+    
     def _evaluate(
         self,
         iter: int,
@@ -131,75 +179,6 @@ class UnfoldingNet(nn.Module):
         return [
             self._evaluate(i, solution, self._device) for i in range(len(self._s_hats))
         ]
-    
-    def forward(self, num_itr: int = 25) : 
-        pass
-
-    def deep_train(
-        self,
-        optimizer: torch.optim.Optimizer,
-        loss_func: torch.nn.Module,
-        A: Tensor,
-        b: Tensor,
-        total_itr: int = 25,
-        num_batch: int = 10000,
-    ) -> list[float]:
-        """Train the given model using the specified optimizer and loss function.
-
-        Args:
-          optimizer: The optimizer to use for training.
-          loss_func: The loss function to use for training.
-          total_itr: The total number of iterations (generations) for training.
-          A: The initial matrix.
-          b: The solution of the linear problem
-          num_batch: The number of batches per iteration.
-
-        Returns:
-          The list of loss values per iteration.
-        """
-        loss_gen = []
-        for gen in range(total_itr):
-            for i in range(num_batch):
-                optimizer.zero_grad()
-                x_hat, _ = self(gen + 1)
-                loss = loss_func(x_hat @ self._H, self._y)  # to avoid using the solution
-                loss.backward()
-                optimizer.step()
-
-                if i % 200 == 0:
-                    print(
-                        "generation:",
-                        gen + 1,
-                        " batch:",
-                        i,
-                        "\t MSE loss:",
-                        loss.item(),
-                    )
-            loss_gen.append(loss.item())
-        return loss_gen
-
-    def evaluate(
-        self,
-        solution: Tensor,
-        num_itr: int = 10,
-        device: torch.device = _device,
-    ) -> float:
-        """Evaluate function
-
-        Args:
-            num_itr (int, optional): Number of iterations choose. Defaults to 10.
-            solution (Tensor, optional): The solution of the linear problem. Defaults to None.
-            device (torch.device, optional): The device. Defaults to _device.
-
-        Returns:
-            torch.Tensor : The error between the exact solution and the proposed solution
-        """
-        s_hat, _ = self(num_itr)
-
-        err = (torch.norm(solution.to(device) - s_hat.to(device)) ** 2).item() / (
-            self.A.shape[0] * self.bs
-        )
-        return err
 
 class SORNet(UnfoldingNet):
     """Deep unfolded SOR with a constant step size."""
@@ -229,7 +208,11 @@ class SORNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self.inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
+        self._inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
+    
+    def forward(self): 
+        
+        pass
 
 class SORChebyNet(UnfoldingNet):
     """Deep unfolded SOR with Chebyshev acceleration."""
@@ -271,15 +254,19 @@ class SORChebyNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self.gamma = nn.Parameter(
+        self._gamma = nn.Parameter(
             init_val_SOR_CHEBY_Net_gamma * torch.ones(num_itr, device=device)
-        )
-        self.omega = nn.Parameter(
+        ) # why ?
+        self._omega = nn.Parameter(
             init_val_SOR_CHEBY_Net_omega * torch.ones(num_itr, device=device)
-        )
-        self.inv_omega = nn.Parameter(
+        ) # why ?
+        self._inv_omega = nn.Parameter(
             torch.tensor(init_val_SOR_CHEBY_Net_alpha, device=device)
         )
+    
+    def forward(self): 
+        
+        pass
 
 class AORNet(UnfoldingNet):
     """Deep unfolded AOR with a constant step size."""
@@ -314,8 +301,12 @@ class AORNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self.r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
-        self.omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
+        self._r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
+        self._omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
+    
+    def forward(self): 
+        
+        pass
 
 class RichardsonNet(UnfoldingNet):
     """Deep unfolded Richardson iteration."""
@@ -325,7 +316,6 @@ class RichardsonNet(UnfoldingNet):
 
     def __init__(
         self,
-        a: Tensor,
         h: Tensor,
         bs: int,
         y: Tensor,
@@ -342,8 +332,12 @@ class RichardsonNet(UnfoldingNet):
           init_val_RINet: Initial value for `inv_omega`.
           device: Device to run the model on ('cpu' or 'cuda').
         """
-        super().__init__(a, h, bs, y, device)
-        self.inv_omega = nn.Parameter(torch.tensor(init_val_RINet, device=device))
+        super().__init__(h, bs, y, device)
+        self._inv_omega = nn.Parameter(torch.tensor(init_val_RINet, device=device))
+    
+    def forward(self): 
+        
+        pass
 
 
 # class SORNet(UnfoldingNet):
