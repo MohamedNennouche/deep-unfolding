@@ -13,7 +13,8 @@ from torch import Tensor
 from .utils import _decompose_matrix, _device
 
 # Create a logger for this module
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
+"""Logger for this module."""
 
 
 class UnfoldingNet(nn.Module):
@@ -44,26 +45,34 @@ class UnfoldingNet(nn.Module):
 
     def __init__(
         self,
-        a: Tensor,
         h: Tensor,
         bs: int,
         y: Tensor,
         device: torch.device = _device,
     ):
 
+        self._H = h
+        self._bs = bs
+        self._y = y
+        self._device = device
+        self._solved = False
+        
+        self._s_hats = []
+        
         super().__init__()
         self.device = device
-
-        a, d, l, u, _, _ = _decompose_matrix(a, device)  # noqa: E741
-
-        self.A = a.to(device)
-        self.D = d.to(device)
-        self.L = l.to(device)
-        self.U = u.to(device)
-        self.H = h.to(device)
-        self.Dinv = torch.linalg.inv(d).to(device)
-        self.bs = bs
-        self.y = y.to(device)
+        
+        self._A, self._D, self._L, self._U, self._Dinv, self._Minv = _decompose_matrix(
+            h, device
+        )
+        
+        _logger.info(f"Code run on : {_device}")
+    
+    def s_hat(self) -> Tensor:
+        """Final solution, obtained after all the solver iterations."""
+        if not self._solved:
+            raise RuntimeError("Problem has not been solved yet!")
+        return self._s_hats[-1]
 
     def deep_train(
         self,
@@ -143,7 +152,6 @@ class SORNet(UnfoldingNet):
 
     def __init__(
         self,
-        a: Tensor,
         h: Tensor,
         bs: int,
         y: Tensor,
@@ -160,7 +168,7 @@ class SORNet(UnfoldingNet):
           init_val_SORNet: Initial value for `inv_omega`.
           device: Device to run the model on ('cpu' or 'cuda').
         """
-        super().__init__(a, h, bs, y, device)
+        super().__init__(h, bs, y, device)
         self.inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
 
     def forward(self, num_itr: int = 25) -> tuple[Tensor, list[Tensor]]:
@@ -208,7 +216,6 @@ class SORChebyNet(UnfoldingNet):
     def __init__(
         self,
         num_itr: int,
-        a: Tensor,
         h: Tensor,
         bs: int,
         y: Tensor,
@@ -230,7 +237,7 @@ class SORChebyNet(UnfoldingNet):
           init_val_SOR_CHEBY_Net_alpha: Initial value for `inv_omega`.
           device: Device to run the model on ('cpu' or 'cuda').
         """
-        super().__init__(a, h, bs, y, device)
+        super().__init__(h, bs, y, device)
         self.gamma = nn.Parameter(
             init_val_SOR_CHEBY_Net_gamma * torch.ones(num_itr, device=device)
         )
@@ -297,7 +304,6 @@ class AORNet(UnfoldingNet):
 
     def __init__(
         self,
-        a: Tensor,
         h: Tensor,
         bs: int,
         y: Tensor,
@@ -316,7 +322,7 @@ class AORNet(UnfoldingNet):
           init_val_AORNet_omega: Initial value for `omega`.
           device: Device to run the model on ('cpu' or 'cuda').
         """
-        super().__init__(a, h, bs, y, device)
+        super().__init__(h, bs, y, device)
         self.r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
         self.omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
 
