@@ -41,10 +41,12 @@ def deep_train(
         The list of loss values per iteration.
     """
     loss_gen = []
+    H = H.clone().detach().requires_grad_(True)
+    y = y.clone().detach().requires_grad_(True)
     for gen in range(total_itr):
         for i in range(num_batch):
             optimizer.zero_grad()
-            x_hat, _ = model(gen + 1) # change the structure of forward function
+            x_hat = model(gen + 1) # change the structure of forward function
             loss = loss_func(x_hat @ H, y)  # to avoid using the solution
             loss.backward()
             optimizer.step()
@@ -139,8 +141,8 @@ class UnfoldingNet(nn.Module):
         Returns:
           The solution tensors through the several iterations.
         """
-        if self._solved:
-            raise RuntimeError("Problem has already been solved!")
+        # if self._solved:
+        #     raise RuntimeError("Problem has already been solved!")
 
         self._solved = True
 
@@ -155,7 +157,7 @@ class UnfoldingNet(nn.Module):
         # Delegate the actual iterations to the concrete solver method
         self._iterate(iters, yMF, s)
 
-        return self._s_hats
+        return s #self._s_hats
     
     def _evaluate(
         self,
@@ -229,7 +231,7 @@ class SORNet(UnfoldingNet):
         h: Tensor,
         bs: int,
         y: Tensor,
-        init_val_SORNet: float = 1.1,
+        omega: float = 1.1,
         device: torch.device = _device,
     ):
         """Initialize the SORNet model.
@@ -243,7 +245,7 @@ class SORNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self._inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
+        self.omega = nn.Parameter(torch.tensor(omega, device=device))
     
     def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
 
@@ -274,13 +276,13 @@ class SORChebyNet(UnfoldingNet):
 
     def __init__(
         self,
-        num_itr: int,
         h: Tensor,
         bs: int,
         y: Tensor,
-        init_val_SOR_CHEBY_Net_omega: float = 0.6,
-        init_val_SOR_CHEBY_Net_gamma: float = 0.8,
-        init_val_SOR_CHEBY_Net_alpha: float = 0.9,
+        omega: float = 0.6,
+        omegaa: float = 0.8,
+        gamma: float = 0.9,
+        num_itr: int = 15,
         device: torch.device = _device,
     ):
         """Initialize the SOR_CHEBY_Net model.
@@ -297,14 +299,14 @@ class SORChebyNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self._gamma = nn.Parameter(
-            init_val_SOR_CHEBY_Net_gamma * torch.ones(num_itr, device=device)
+        self.omegaa = nn.Parameter(
+            omegaa * torch.ones(num_itr, device=device)
         ) # why ?
-        self._omega = nn.Parameter(
-            init_val_SOR_CHEBY_Net_omega * torch.ones(num_itr, device=device)
+        self.omega = nn.Parameter(
+            omega * torch.ones(num_itr, device=device)
         ) # why ?
-        self._inv_omega = nn.Parameter(
-            torch.tensor(init_val_SOR_CHEBY_Net_alpha, device=device)
+        self.gamma = nn.Parameter(
+            torch.tensor(gamma, device=device)
         )
     
     def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
@@ -347,8 +349,8 @@ class AORNet(UnfoldingNet):
         h: Tensor,
         bs: int,
         y: Tensor,
-        init_val_AORNet_r: float = 0.9,
-        init_val_AORNet_omega: float = 1.5,
+        r: float = 0.9,
+        omega: float = 1.5,
         device: torch.device = _device,
     ):
         """Initialize the AORNet model.
@@ -363,8 +365,8 @@ class AORNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self._r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
-        self._omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
+        self.r = nn.Parameter(torch.tensor(r, device=device))
+        self.omega = nn.Parameter(torch.tensor(omega, device=device))
     
     def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
 
@@ -395,7 +397,7 @@ class RichardsonNet(UnfoldingNet):
         h: Tensor,
         bs: int,
         y: Tensor,
-        init_val_RINet: float = 0.1,
+        omega: float = 0.1,
         device: torch.device = _device,
     ):
         """Initialize the RINet model.
@@ -409,7 +411,7 @@ class RichardsonNet(UnfoldingNet):
           device: Device to run the model on ('cpu' or 'cuda').
         """
         super().__init__(h, bs, y, device)
-        self._inv_omega = nn.Parameter(torch.tensor(init_val_RINet, device=device))
+        self.omega = nn.Parameter(torch.tensor(omega, device=device))
     
     def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
 
