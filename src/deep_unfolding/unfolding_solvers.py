@@ -119,8 +119,43 @@ class UnfoldingNet(nn.Module):
             raise RuntimeError("Problem has not been solved yet!")
         return self._s_hats[-1]
     
-    def forward(self, num_itr: int = 25) : 
+    def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
+        """Performs the low-level solver iterations according to the concrete model.
+
+        Args:
+          num_itr: The number of iterations to perform.
+          yMF: The `y` matrix multiplied by the `H` matrix transpose.
+          s: Initial solution.
+        """
         pass
+    
+    def forward(self, iters: int = 25,
+    ) -> list[Tensor]:
+        """Solve the linear problem.
+
+        Args:
+          iters: Number of iterations to perform.
+
+        Returns:
+          The solution tensors through the several iterations.
+        """
+        if self._solved:
+            raise RuntimeError("Problem has already been solved!")
+
+        self._solved = True
+
+        s = torch.zeros(self._bs, self._A.shape[0]).to(self._device)
+        self._s_hats.append(s)
+
+        yMF = torch.matmul(self._y, self._H.T)
+
+        # Generate batch initial solution vector
+        s = torch.matmul(yMF, self._Dinv)
+
+        # Delegate the actual iterations to the concrete solver method
+        self._iterate(iters, yMF, s)
+
+        return self._s_hats
     
     def _evaluate(
         self,
@@ -210,9 +245,17 @@ class SORNet(UnfoldingNet):
         super().__init__(h, bs, y, device)
         self._inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
     
-    def forward(self): 
-        
-        pass
+    def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
+
+        inv_omega = torch.div(1, self.omega)
+        m_inv_sor = torch.linalg.inv(self._D - torch.mul(inv_omega, self._L))
+
+        for _ in range(num_itr):
+            temp = torch.mul((inv_omega - 1), self._D) + torch.mul(inv_omega, self._U)
+            s = torch.matmul(s, torch.matmul(m_inv_sor, temp)) + torch.matmul(
+                yMF, m_inv_sor
+            )
+            self._s_hats.append(s)
 
 class SORChebyNet(UnfoldingNet):
     """Deep unfolded SOR with Chebyshev acceleration."""
@@ -264,9 +307,28 @@ class SORChebyNet(UnfoldingNet):
             torch.tensor(init_val_SOR_CHEBY_Net_alpha, device=device)
         )
     
-    def forward(self): 
-        
-        pass
+    def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
+
+        inv_omega = torch.div(1, self.omega)
+        m_inv_sor = torch.linalg.inv(self._D - torch.mul(inv_omega, self._L))
+
+        s_present = s
+        s_old = torch.zeros(s_present.shape).to(self._device)
+
+        for _ in range(num_itr):
+            temp = torch.mul((inv_omega - 1), self._D) + torch.mul(inv_omega, self._U)
+            s = torch.matmul(s, torch.matmul(m_inv_sor, temp)) + torch.matmul(
+                yMF, m_inv_sor
+            )
+
+            s_new = (
+                self.omegaa * (self.gamma * (s - s_present) + (s_present - s_old))
+                + s_old
+            )
+            s_old = s
+            s_present = s_new
+
+            self._s_hats.append(s_new)
 
 class AORNet(UnfoldingNet):
     """Deep unfolded AOR with a constant step size."""
@@ -304,9 +366,23 @@ class AORNet(UnfoldingNet):
         self._r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
         self._omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
     
-    def forward(self): 
-        
-        pass
+    def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
+
+        m = self._D - torch.mul(self.r, self._L)
+        m_inv_aor = torch.linalg.inv(m)
+
+        # ! bug : difference between n and self.n (some ambiguity)
+        n = (
+            torch.mul((1 - self.omega), self._D)
+            + torch.mul((self.omega - self.r), self._L)
+            + torch.mul(self.omega, self._U)
+        )
+
+        for _ in range(num_itr):
+            s = torch.matmul(s, torch.matmul(m_inv_aor, n)) + torch.mul(
+                self.omega, torch.matmul(yMF, m_inv_aor)
+            )
+            self._s_hats.append(s)
 
 class RichardsonNet(UnfoldingNet):
     """Deep unfolded Richardson iteration."""
@@ -335,277 +411,8 @@ class RichardsonNet(UnfoldingNet):
         super().__init__(h, bs, y, device)
         self._inv_omega = nn.Parameter(torch.tensor(init_val_RINet, device=device))
     
-    def forward(self): 
-        
-        pass
+    def _iterate(self, num_itr: int, yMF: Tensor, s: Tensor) -> None:
 
-
-# class SORNet(UnfoldingNet):
-#     """Deep unfolded SOR with a constant step size."""
-
-#     device: torch.device
-#     """Device to run the model on."""
-
-#     inv_omega: nn.Parameter
-#     """Inverse of the relaxation parameter omega."""
-
-#     def __init__(
-#         self,
-#         h: Tensor,
-#         bs: int,
-#         y: Tensor,
-#         init_val_SORNet: float = 1.1,
-#         device: torch.device = _device,
-#     ):
-#         """Initialize the SORNet model.
-
-#         Args:
-#           a: Matrix $A$ of the linear system.
-#           h: Matrix $H$.
-#           bs: Batch size.
-#           y: Solution of the linear equation.
-#           init_val_SORNet: Initial value for `inv_omega`.
-#           device: Device to run the model on ('cpu' or 'cuda').
-#         """
-#         super().__init__(h, bs, y, device)
-#         self.inv_omega = nn.Parameter(torch.tensor(init_val_SORNet, device=device))
-
-#     def forward(self, num_itr: int = 25) -> tuple[Tensor, list[Tensor]]:
-#         """Perform forward pass of the SORNet model.
-
-#         Args:
-#           num_itr: Number of iterations.
-
-#         Returns:
-#           A tuple with the following contents:
-#             - Output tensor.
-#             - List of intermediate results.
-#         """
-#         traj = []
-
-#         m_inv = torch.linalg.inv(self.inv_omega * self.D + self.L)
-#         s = torch.zeros(self.bs, self.H.size(0), device=self.device)
-#         traj.append(s)
-#         yMF = torch.matmul(self.y, self.H.T)
-#         s = torch.matmul(yMF, self.Dinv)
-
-#         for _ in range(num_itr):
-#             temp = torch.matmul(s, (self.inv_omega - 1) * self.D - self.U) + yMF
-#             s = torch.matmul(temp, m_inv)
-#             traj.append(s)
-
-#         return s, traj
-
-
-# class SORChebyNet(UnfoldingNet):
-#     """Deep unfolded SOR with Chebyshev acceleration."""
-
-#     device: torch.device
-#     """Device to run the model on."""
-
-#     gamma: nn.Parameter
-#     """Gamma parameter for each iteration."""
-
-#     omega: nn.Parameter
-#     """Omega parameter for each iteration."""
-
-#     inv_omega: nn.Parameter
-#     """Inverse of the relaxation parameter omega."""
-
-#     def __init__(
-#         self,
-#         num_itr: int,
-#         h: Tensor,
-#         bs: int,
-#         y: Tensor,
-#         init_val_SOR_CHEBY_Net_omega: float = 0.6,
-#         init_val_SOR_CHEBY_Net_gamma: float = 0.8,
-#         init_val_SOR_CHEBY_Net_alpha: float = 0.9,
-#         device: torch.device = _device,
-#     ):
-#         """Initialize the SOR_CHEBY_Net model.
-
-#         Args:
-#           num_itr: Number of iterations.
-#           a: Matrix $A$ of the linear system.
-#           h: Matrix $H$.
-#           bs: Batch size.
-#           y: Solution of the linear equation.
-#           init_val_SOR_CHEBY_Net_omega: Initial value for `omega`.
-#           init_val_SOR_CHEBY_Net_gamma: Initial value for `gamma`.
-#           init_val_SOR_CHEBY_Net_alpha: Initial value for `inv_omega`.
-#           device: Device to run the model on ('cpu' or 'cuda').
-#         """
-#         super().__init__(h, bs, y, device)
-#         self.gamma = nn.Parameter(
-#             init_val_SOR_CHEBY_Net_gamma * torch.ones(num_itr, device=device)
-#         )
-#         self.omega = nn.Parameter(
-#             init_val_SOR_CHEBY_Net_omega * torch.ones(num_itr, device=device)
-#         )
-#         self.inv_omega = nn.Parameter(
-#             torch.tensor(init_val_SOR_CHEBY_Net_alpha, device=device)
-#         )
-
-#     def forward(self, num_itr: int = 25) -> tuple[Tensor, list[Tensor]]:
-#         """Perform forward pass of the SOR_CHEBY_Net model.
-
-#         Args:
-#           num_itr: Number of iterations.
-
-#         Returns:
-#           A tuple with the following contents:
-#             - Output tensor.
-#             - List of intermediate results.
-#         """
-#         traj = []
-
-#         m_inv = torch.linalg.inv(self.inv_omega * self.D + self.L)
-#         s = torch.zeros(self.bs, self.H.size(0), device=self.device)  # modif to size(0)
-#         s_new = torch.zeros(
-#             self.bs, self.H.size(0), device=self.device
-#         )  # modif to size(0)
-#         traj.append(s)
-#         yMF = torch.matmul(self.y, self.H.T)
-#         s = torch.matmul(yMF, self.Dinv)
-#         s_present = s
-#         s_old = torch.zeros_like(s_present)
-
-#         for i in range(num_itr):
-#             temp = torch.matmul(s, (self.inv_omega - 1) * self.D - self.U) + yMF
-#             s = torch.matmul(temp, m_inv)
-
-#             s_new = (
-#                 self.omega[i] * (self.gamma[i] * (s - s_present) + (s_present - s_old))
-#                 + s_old
-#             )
-#             s_old = s
-#             s_present = s_new
-#             traj.append(s_new)
-
-#         return s_new, traj
-
-
-# =====================================================================================
-
-
-# class AORNet(UnfoldingNet):
-#     """Deep unfolded AOR with a constant step size."""
-
-#     device: torch.device
-#     """Device to run the model on."""
-
-#     r: nn.Parameter
-#     """Parameter `r` for AOR."""
-
-#     omega: nn.Parameter
-#     """Relaxation parameter omega."""
-
-#     def __init__(
-#         self,
-#         h: Tensor,
-#         bs: int,
-#         y: Tensor,
-#         init_val_AORNet_r: float = 0.9,
-#         init_val_AORNet_omega: float = 1.5,
-#         device: torch.device = _device,
-#     ):
-#         """Initialize the AORNet model.
-
-#         Args:
-#           a: Matrix $A$ of the linear system.
-#           h: Matrix $H$.
-#           bs: Batch size.
-#           y: Solution of the linear equation.
-#           init_val_AORNet_r: Initial value for `r`.
-#           init_val_AORNet_omega: Initial value for `omega`.
-#           device: Device to run the model on ('cpu' or 'cuda').
-#         """
-#         super().__init__(h, bs, y, device)
-#         self.r = nn.Parameter(torch.tensor(init_val_AORNet_r, device=device))
-#         self.omega = nn.Parameter(torch.tensor(init_val_AORNet_omega, device=device))
-
-#     def forward(self, num_itr: int = 25) -> tuple[Tensor, list[Tensor]]:
-#         """Perform forward pass of the AORNet model.
-
-#         Args:
-#           num_itr: Number of iterations.
-
-#         Returns:
-#           A tuple with the following contents:
-#           - Output tensor.
-#           - List of intermediate results.
-#         """
-#         traj = []
-
-#         m_inv = torch.linalg.inv(self.L - self.r * self.D)
-#         n = (
-#             (1 - self.omega) * self.D
-#             + (self.omega - self.r) * self.L
-#             + self.omega * self.U
-#         )
-#         s = torch.zeros(
-#             self.bs, self.H.size(0), device=self.device
-#         )  # change to size(0)
-#         traj.append(s)
-#         yMF = torch.matmul(self.y, self.H.T)
-#         s = torch.matmul(yMF, self.Dinv)
-
-#         for _ in range(num_itr):
-#             s = torch.matmul(s, torch.matmul(m_inv, n)) + torch.matmul(yMF, m_inv)
-#             traj.append(s)
-
-#         return s, traj
-
-
-# class RichardsonNet(UnfoldingNet):
-#     """Deep unfolded Richardson iteration."""
-
-#     inv_omega: nn.Parameter
-#     """Inverse of the relaxation parameter omega."""
-
-#     def __init__(
-#         self,
-#         a: Tensor,
-#         h: Tensor,
-#         bs: int,
-#         y: Tensor,
-#         init_val_RINet: float = 0.1,
-#         device: torch.device = _device,
-#     ):
-#         """Initialize the RINet model.
-
-#         Args:
-#           a: Matrix $A$ of the linear system.
-#           h: Matrix $H$.
-#           bs: Batch size.
-#           y: Solution of the linear equation.
-#           init_val_RINet: Initial value for `inv_omega`.
-#           device: Device to run the model on ('cpu' or 'cuda').
-#         """
-#         super().__init__(a, h, bs, y, device)
-#         self.inv_omega = nn.Parameter(torch.tensor(init_val_RINet, device=device))
-
-#     def forward(self, num_itr: int = 25) -> tuple[Tensor, list[Tensor]]:
-#         """Perform forward pass of the RINet model.
-
-#         Args:
-#           num_itr: Number of iterations.
-
-#         Returns:
-#           A tuple with the following contents:
-#             - Output tensor.
-#             - List of intermediate results.
-#         """
-#         traj = []
-
-#         s = torch.zeros(self.bs, self.A.shape[0], device=self.device)
-#         traj.append(s)
-#         yMF = torch.matmul(self.y, self.H.T)
-#         s = torch.matmul(yMF, self.Dinv)
-
-#         for _ in range(num_itr):
-#             s = s + self.inv_omega * (yMF - torch.matmul(s, self.A))
-#             traj.append(s)
-
-#         return s, traj
+        for _ in range(num_itr):
+            s = s + torch.mul(self.omega, (yMF - torch.matmul(s, self._A)))
+            self._s_hats.append(s)
